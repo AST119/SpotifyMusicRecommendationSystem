@@ -8,7 +8,10 @@ Experience the Spotify Music Recommendation System live on Render:
 [https://spotifymusicrecommendationsystem.onrender.com/](https://spotifymusicrecommendationsystem.onrender.com/)
 
 ## WebApp Screenshot
-![Alt Text - WebAppScreenshot]
+![Alt Text - WebAppScreenshot-1](Screenshots/Scr1.png)
+![Alt Text - WebAppScreenshot-2](Screenshots/Scr2.png)
+![Alt Text - WebAppScreenshot-3](Screenshots/Scr3.png)
+
 ## 🚀 How It Works
 
 The recommendation system follows a typical machine learning pipeline for unsupervised learning:
