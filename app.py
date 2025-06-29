@@ -18,81 +18,93 @@ except FileNotFoundError:
 st.write("---")
 
 # --- Initialize Session State ---
-# This is crucial for maintaining state across Streamlit reruns
 if 'predicted_cluster' not in st.session_state:
     st.session_state.predicted_cluster = None
-# st.session_state.selected_genre is removed as it's no longer used for recommendation filtering
 if 'recommendations_data' not in st.session_state:
     st.session_state.recommendations_data = pd.DataFrame(columns=['track_name', 'artist_name', 'cluster', 'genre'])
 if 'recommendation_message' not in st.session_state:
     st.session_state.recommendation_message = "Predict a cluster to get recommendations."
 
 
-# --- Load Models and Frequency Maps ---
-scaler = None
-pca = None
-kmeans_optimal = None
-freq_maps = {}
+# --- Caching Model Loading ---
+@st.cache_resource
+def load_models():
+    """Loads all models and frequency maps using caching."""
+    scaler = None
+    pca = None
+    kmeans_optimal = None
+    freq_maps = {}
+    
+    model_paths = {
+        'scaler': 'models/scaler_model.pkl',
+        'pca': 'models/pca_model.pkl',
+        'kmeans_optimal': 'models/kmeans_model.pkl'
+    }
 
-model_paths = {
-    'scaler': 'models/scaler_model.pkl',
-    'pca': 'models/pca_model.pkl',
-    'kmeans_optimal': 'models/kmeans_model.pkl'
-}
+    freq_map_paths = {
+        'genre': 'models/genre_freq_map.pkl',
+        'key': 'models/key_freq_map.pkl',
+        'mode': 'models/mode_freq_map.pkl',
+        'time_signature': 'models/time_signature_freq_map.pkl'
+    }
 
-freq_map_paths = {
-    'genre': 'models/genre_freq_map.pkl',
-    'key': 'models/key_freq_map.pkl',
-    'mode': 'models/mode_freq_map.pkl',
-    'time_signature': 'models/time_signature_freq_map.pkl'
-}
+    errors = []
 
-loaded_successfully = True
+    for model_name, path in model_paths.items():
+        try:
+            with open(path, 'rb') as file:
+                if model_name == 'scaler':
+                    scaler = pickle.load(file)
+                elif model_name == 'pca':
+                    pca = pickle.load(file)
+                elif model_name == 'kmeans_optimal':
+                    kmeans_optimal = pickle.load(file)
+        except FileNotFoundError:
+            errors.append(f"Model file '{path}' not found.")
+        except Exception as e:
+            errors.append(f"Error loading {model_name} model: {e}")
 
-for model_name, path in model_paths.items():
+    for col_name, path in freq_map_paths.items():
+        try:
+            with open(path, 'rb') as file:
+                freq_maps[col_name] = pickle.load(file)
+        except FileNotFoundError:
+            errors.append(f"Frequency map file '{path}' not found.")
+        except Exception as e:
+            errors.append(f"Error loading {col_name} frequency map: {e}")
+            
+    return scaler, pca, kmeans_optimal, freq_maps, errors
+
+# --- Caching Recommendation Data Loading ---
+@st.cache_data
+def load_recommendation_data():
+    """Loads the recommendation CSV data using caching."""
+    rec_df = pd.DataFrame()
+    error = None
     try:
-        with open(path, 'rb') as file:
-            if model_name == 'scaler':
-                scaler = pickle.load(file)
-            elif model_name == 'pca':
-                pca = pickle.load(file)
-            elif model_name == 'kmeans_optimal':
-                kmeans_optimal = pickle.load(file)
+        rec_df = pd.read_csv('Recommendation.csv')
+        if 'cluster' in rec_df.columns:
+            rec_df['cluster'] = rec_df['cluster'].astype(int)
     except FileNotFoundError:
-        st.error(f"Error: Model file '{path}' not found. Please ensure all model files are in the same directory.")
-        loaded_successfully = False
+        error = "Error: 'Recommendation.csv' not found. Please place the recommendation data file in the same directory as 'app.py'."
     except Exception as e:
-        st.error(f"An error occurred while loading {model_name} model: {e}")
-        loaded_successfully = False
+        error = f"An error occurred while loading recommendation data: {e}"
+    return rec_df, error
 
-for col_name, path in freq_map_paths.items():
-    try:
-        with open(path, 'rb') as file:
-            freq_maps[col_name] = pickle.load(file)
-    except FileNotFoundError:
-        st.error(f"Error: Frequency map file '{path}' not found. Please ensure all frequency map files are in the same directory.")
-        loaded_successfully = False
-    except Exception as e:
-        st.error(f"An error occurred while loading {col_name} frequency map: {e}")
-        loaded_successfully = False
+# Load all resources once at the start of the app
+scaler, pca, kmeans_optimal, freq_maps, model_load_errors = load_models()
+recommendation_df, rec_data_load_error = load_recommendation_data()
 
-# --- Load Recommendation Data ---
-recommendation_df = pd.DataFrame()
-try:
-    recommendation_df = pd.read_csv('Recommendation.csv')
-    if 'cluster' in recommendation_df.columns:
-        recommendation_df['cluster'] = recommendation_df['cluster'].astype(int)
-except FileNotFoundError:
-    st.error("Error: 'models/Recommendation.csv' not found. Please place the recommendation data file in the 'models' directory.")
-    loaded_successfully = False
-except Exception as e:
-    st.error(f"An error occurred while loading recommendation data: {e}")
-    loaded_successfully = False
+loaded_successfully = not (model_load_errors or rec_data_load_error)
 
 if loaded_successfully:
-    st.success("All models, frequency maps, and recommendation data loaded successfully!")
+    st.success("All resources loaded successfully!")
 else:
-    st.error("Some essential files could not be loaded. Please check the file paths.")
+    st.error("Some essential files could not be loaded. Please check the file paths and ensure all models and data are correctly placed.")
+    for err in model_load_errors:
+        st.error(err)
+    if rec_data_load_error:
+        st.error(rec_data_load_error)
 
 st.write("---")
 
@@ -109,7 +121,6 @@ numerical_feature_names = [
 categorical_feature_names = [
     'genre', 'key', 'mode', 'time_signature'
 ]
-
 
 with col1:
     popularity = st.slider('Popularity (0-100)', 0, 100, 50)
@@ -138,7 +149,6 @@ with col3:
     mode_default_index = mode_options.index('Major') if 'Major' in mode_options else (0 if mode_options else None)
     time_signature_default_index = time_signature_options.index('4/4') if '4/4' in time_signature_options else (0 if time_signature_options else None)
 
-    # These inputs are still used for predicting the cluster, even if genre is not used for recommendation filtering
     genre = st.selectbox('Genre', options=genre_options, index=genre_default_index, disabled=not genre_options, key='input_genre')
     key = st.selectbox('Key', options=key_options, index=key_default_index, disabled=not key_options, key='input_key')
     mode = st.selectbox('Mode', options=mode_options, index=mode_default_index, disabled=not mode_options, key='input_mode')
@@ -151,7 +161,6 @@ all_pca_input_feature_names = numerical_feature_names + [
 
 st.write("---")
 
-# Function to generate recommendations (MODIFIED: removed genre filter)
 def get_recommendations(rec_data_df, target_cluster, num_recs=3):
     if rec_data_df.empty:
         return pd.DataFrame(), "Recommendation data not loaded or is empty."
@@ -197,11 +206,8 @@ if st.button("Predict Music Cluster"):
             st.success(f"The predicted music cluster for your input is: **Cluster {predicted_cluster}**")
             st.info("Songs in this cluster might share similar characteristics to the one you described.")
 
-            # Update session state with prediction results for recommendations
             st.session_state.predicted_cluster = predicted_cluster
-            # st.session_state.selected_genre is no longer updated here
 
-            # Generate and store initial recommendations
             recs, msg = get_recommendations(
                 recommendation_df,
                 st.session_state.predicted_cluster
@@ -225,20 +231,18 @@ if st.session_state.predicted_cluster is not None:
     
     if not st.session_state.recommendations_data.empty:
         for index, row in st.session_state.recommendations_data.iterrows():
-            col_left, col_right = st.columns([0.7, 0.3]) # Adjust column ratios as needed
+            col_left, col_right = st.columns([0.7, 0.3])
             with col_left:
                 st.write(f"🎶 **{row['track_name']}** by {row['artist_name']}")
             with col_right:
-                # Using markdown with inline CSS for right alignment and smaller text
                 st.markdown(f"<p style='text-align: right; font-size: 0.9em; color: grey;'>{row['genre']}</p>", unsafe_allow_html=True)
-            st.markdown("---") # Separator for each song
+            st.markdown("---")
     else:
         st.info("No recommendations found for this cluster in the dataset.")
 
     if st.session_state.recommendation_message:
         st.warning(st.session_state.recommendation_message)
 
-    # Refresh button for recommendations
     if st.button("Refresh Recommendations 🔄"):
         recs, msg = get_recommendations(
             recommendation_df,
@@ -246,6 +250,6 @@ if st.session_state.predicted_cluster is not None:
         )
         st.session_state.recommendations_data = recs
         st.session_state.recommendation_message = msg if msg else ""
-        st.rerun() # Force a re-execution to update the displayed recommendations
+        st.rerun()
 else:
     st.info("Predict a cluster first to see recommendations.")
